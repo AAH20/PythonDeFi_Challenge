@@ -4,7 +4,7 @@ from django.middleware import csrf
 from rest_framework import exceptions as rest_exceptions, response, decorators as rest_decorators, permissions as rest_permissions
 from rest_framework_simplejwt import tokens, views as jwt_views, serializers as jwt_serializers, exceptions as jwt_exceptions
 from user import serializers, models
-
+import requests
 
 def get_user_tokens(user):
     refresh = tokens.RefreshToken.for_user(user)
@@ -12,7 +12,6 @@ def get_user_tokens(user):
         "refresh_token": str(refresh),
         "access_token": str(refresh.access_token)
     }
-
 
 @rest_decorators.api_view(["POST"])
 @rest_decorators.permission_classes([])
@@ -27,7 +26,18 @@ def loginView(request):
 
     if user is not None:
         tokens = get_user_tokens(user)
-        res = response.Response()
+        
+        # Serialize user data and include it in the response
+        user_serializer = serializers.UserSerializer(user)
+        response_data = {
+            'refresh_token': tokens["refresh_token"],
+            'access_token': tokens["access_token"],
+            'user': user_serializer.data 
+        }
+
+        res = response.Response(response_data) 
+
+        # Set cookies
         res.set_cookie(
             key=settings.SIMPLE_JWT['AUTH_COOKIE'],
             value=tokens["access_token"],
@@ -46,12 +56,10 @@ def loginView(request):
             samesite=settings.SIMPLE_JWT['AUTH_COOKIE_SAMESITE']
         )
 
-        res.data = tokens
         res["X-CSRFToken"] = csrf.get_token(request)
         return res
-    raise rest_exceptions.AuthenticationFailed(
-        "Email or Password is incorrect!")
 
+    raise rest_exceptions.AuthenticationFailed("Email or Password is incorrect!")
 
 @rest_decorators.api_view(["POST"])
 @rest_decorators.permission_classes([])
@@ -64,7 +72,6 @@ def registerView(request):
     if user is not None:
         return response.Response("Registered!")
     return rest_exceptions.AuthenticationFailed("Invalid credentials!")
-
 
 @rest_decorators.api_view(['POST'])
 @rest_decorators.permission_classes([rest_permissions.IsAuthenticated])
@@ -85,7 +92,6 @@ def logoutView(request):
         return res
     except:
         raise rest_exceptions.ParseError("Invalid token")
-
 
 class CookieTokenRefreshSerializer(jwt_serializers.TokenRefreshSerializer):
     refresh = None
@@ -123,8 +129,35 @@ class CookieTokenRefreshView(jwt_views.TokenRefreshView):
 def user(request):
     try:
         user = models.User.objects.get(id=request.user.id)
+
+        # Fetch Ethereum balance from Infura (optimized)
+        if user.ethereum_wallet_address:
+            try:
+                INFURA_API_KEY = 'dd271ba0e16340748ef955b53b3f613d'  # Replace with your actual Infura API key
+                response = requests.post(
+                    'https://mainnet.infura.io/v3/' + INFURA_API_KEY,
+                    headers={'Content-Type': 'application/json'},
+                    json={
+                        "jsonrpc": "2.0",
+                        "method": "eth_getBalance",
+                        "params": [user.ethereum_wallet_address, "latest"],
+                        "id": 1
+                    }
+                )
+                data = response.json()
+                if 'result' in data:
+                    balance_wei = int(data['result'], 16)
+                    user.balance = balance_wei / 10**18
+                else:
+                    user.balance = None
+                    print(f"Error fetching balance: Unexpected response from Infura: {data}")
+            except Exception as e:
+                user.balance = None
+                print(f"Error fetching balance: {e}")
+        else:
+            user.balance = None
+
+        serializer = serializers.UserSerializer(user)
+        return response.Response(serializer.data)
     except models.User.DoesNotExist:
         return response.Response(status_code=404)
-
-    serializer = serializers.UserSerializer(user)
-    return response.Response(serializer.data)

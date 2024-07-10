@@ -10,39 +10,35 @@ import base64, requests, subprocess
 
 class UserManager(BaseUserManager):
     def create_user(self, email, password=None, **kwargs):
-
         if not email:
             raise ValueError("Email is required")
 
         user = self.model(
-            email=self.normalize_email(email)
+            email=self.normalize_email(email),
+            **kwargs  # Pass extra keyword arguments (like ethereum_wallet_address)
         )
-
         user.set_password(password)
         user.save(using=self._db)
-
         return user
-
 
     def create_superuser(self, email, password, **kwargs):
         user = self.create_user(
             email=self.normalize_email(email),
-            password=password
+            password=password,
+            **kwargs  # Pass extra keyword arguments
         )
-
-        user.first_name = kwargs.get('first_name')
-        user.last_name = kwargs.get('last_name')
         user.is_admin = True
         user.is_staff = True
         user.is_superuser = True
         user.save(using=self._db)
-        return
+        return user
 
 
 class User(AbstractBaseUser):
     email = models.EmailField(null=False, blank=False, unique=True)
     first_name = models.CharField(max_length=50, blank=False, null=False, default='Default first name')
     last_name = models.CharField(max_length=50, blank=False, null=False, default='Default last name')
+    ethereum_wallet_address = models.CharField(max_length=42, blank=True, null=True)  # Add ETH address field
     is_admin = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
@@ -53,7 +49,7 @@ class User(AbstractBaseUser):
     objects = UserManager()
 
     USERNAME_FIELD = 'email'
-    REQUIRED_FIELDS = ['first_name', 'last_name']
+    REQUIRED_FIELDS = ['first_name', 'last_name', 'ethereum_wallet_address'] # Require ETH address on signup
 
     def __str__(self):
         return self.email
@@ -63,7 +59,7 @@ class User(AbstractBaseUser):
 
     def has_module_perms(self, app_label):
         return True
-    
+
 class Profile(models.Model):
     user = models.OneToOneField(get_user_model(), on_delete=models.CASCADE)
     image = models.ImageField(upload_to='profile/', default='media/profile/avatar.png')
